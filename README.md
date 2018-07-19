@@ -10,7 +10,7 @@ Fix compiler warnings automatically:
 Add the following lines to `deps()` in `mix.exs`:
 
 ```elixir
-    {:ex_fixer, "~> 0.1.0"},
+    {:ex_fixer, "~> 1.0.0", only: :dev},
 ```
 
 ## Usage
