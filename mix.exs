@@ -7,6 +7,8 @@ defmodule Fixer.MixProject do
       version: "1.0.0",
       elixir: "~> 1.6",
       start_permanent: Mix.env() == :prod,
+      description: description(),
+      package: package(),
       deps: deps()
     ]
   end
