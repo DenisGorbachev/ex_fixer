@@ -29,7 +29,7 @@ defmodule Fixer.MixProject do
 
   defp description do
     """
-    A mix task that automatically fixes compiler warnings: removes unused aliases, prefixes unused variables.
+    A mix task that automatically fixes compiler warnings: prefixes unused variables, removes unused aliases, removes unused imports.
     """
   end
 

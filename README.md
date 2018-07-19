@@ -2,8 +2,9 @@
 
 Fix compiler warnings automatically:
 
-* Remove unused aliases
 * Prefix unused variables
+* Remove unused aliases
+* Remove unused imports
 
 ## Installation
 
