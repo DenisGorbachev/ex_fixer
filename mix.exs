@@ -4,7 +4,7 @@ defmodule Fixer.MixProject do
   def project do
     [
       app: :ex_fixer,
-      version: "0.1.0",
+      version: "1.0.0",
       elixir: "~> 1.6",
       start_permanent: Mix.env() == :prod,
       deps: deps()
@@ -23,6 +23,21 @@ defmodule Fixer.MixProject do
     [
       # {:dep_from_hexpm, "~> 0.3.0"},
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"},
+    ]
+  end
+
+  defp description do
+    """
+    A mix task that automatically fixes compiler warnings: removes unused aliases, prefixes unused variables.
+    """
+  end
+
+  defp package do
+    [
+      files: ["lib", "mix.exs", "README*", "LICENSE*"],
+      maintainers: ["Denis Gorbachev"],
+      licenses: ["MIT"],
+      links: %{"GitHub" => "https://github.com/DenisGorbachev/ex_fixer"}
     ]
   end
 end
