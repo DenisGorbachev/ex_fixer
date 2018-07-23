@@ -6,7 +6,7 @@ Fix compiler warnings automatically:
 * Remove unused aliases
 * Remove unused imports
 
-![Fixer](https://raw.githubusercontent.com/DenisGorbachev/ex_fixer/master/img/cover.jpg)
+![Fixer](https://raw.githubusercontent.com/DenisGorbachev/ex_fixer/master/img/cover.png)
 
 ## Installation
 
