@@ -55,7 +55,7 @@ defmodule Mix.Tasks.Fix do
          :ok <- ExFixer.execute(options) do
       :ok
     else
-      {:error, v} -> raise v
+      {:error, v} -> throw v
       e -> raise {:error, {:unhandle_state, e}}
     end
   end
@@ -64,12 +64,13 @@ defmodule Mix.Tasks.Fix do
   @supported_fixes %{
     "var" => :vars, "vars" => :vars,
     "import" => :imports, "imports" => :imports,
+    "attribute" => :attributes, "attributes" => :attributes,
     "alias" => :aliases, "aliases" => :aliases,
     "function" => :functions, "functions" => :functions,
     "other" => :other
   }
   
-  @allowed_switched  [
+  @allowed_switches  [
     force: :boolean, dry_run: :boolean,
     passive: :boolean, halt_on_error: :boolean,
     only: :keep, exclude: :keep, include: :keep,
@@ -80,31 +81,37 @@ defmodule Mix.Tasks.Fix do
   defp local_change_check(options) do
     with false <- (options[:force] || options[:dry_run] || options[:output_file] || false) && :ok,
          {output, 0} <- System.cmd("git", ["status", "--short"], stderr_to_stdout: true),
-         true <- (String.trim(output)  == "") || {:error, {:output, output}} do
+         true <- ( (String.trim(output)  == "") || {:error, {:local_change_check, output}})  do
       :ok
     else
+      :ok -> :ok
+      {:error, {:local_change_check,_}} -> {:error, "Please commit or stash your changes before executing this command"}
       {:error, e} -> {:error, e}
-      {:error, {:output,_}} -> {:error, "Please commit or stash your changes before executing this command"}
-      _ -> {:error, "Unexpected failure Checking for Local Changes"}
+      e -> {:error, "Unexpected failure Checking for Local Changes  [#{inspect e, limit: :infinity}]"}
     end
   end
   
   defp prepare_options(args) do
-    with {opts, [], []} <- OptionParser.parse(args, strict: @allowed_switched) do
-      initial = Enum.map(@allowed_switched, &({elem(&1,0), nil}))
+    with {opts, [], []} <- OptionParser.parse(args, strict: @allowed_switches) do
+      initial = Enum.map(@allowed_switches, &({elem(&1,0), nil}))
                 |> Map.new()
-                |> put_in(:filters, nil)
+                |> put_in([:filters], nil)
                 |> put_in([:request], Enum.join(args, " "))
                 |> put_in([:request_time], DateTime.utc_now())
-      options = Enum.reduce(opts, initial,
-        fn({arg,value}, acc) ->
-          case arg do
-            key when key in[:force, :dry_run, :passive, :in_file, :out_file] -> put_in(acc, [key], value)
-            :only -> update_in(acc, [:only], &(MapSet.put(&1 || MapSet.new([]), @supported_fixes[String.downcase(value)] || {:unsupported, value})))
-            :exclude -> update_in(acc, [:filters], &( [{:exclude, expand_glob(value)}] ++ (&1 || [])))
-            :include -> update_in(acc, [:filters], &( [{:include, expand_glob(value)}] ++ (&1 || [{:exclude, :all}])))
-          end
-        end)
+      options = Enum.reduce(opts, initial, fn({arg,value}, acc) ->
+        case arg do
+          v when v in[:force, :dry_run, :passive, :input_file, :output_file] -> put_in(acc, [arg], value)
+          :only ->
+            update_in(acc, [:only], fn(arg) ->
+              arg = arg || MapSet.new([])
+              add_feature = @supported_fixes[value] || :unsupported
+              MapSet.put(arg, add_feature)
+            end)
+          :exclude -> update_in(acc, [:filters], &( [{:exclude, expand_glob(value)}] ++ (&1 || [])))
+          :include -> update_in(acc, [:filters], &( [{:include, expand_glob(value)}] ++ (&1 || [{:exclude, :all}])))
+          _ -> acc
+        end
+      end)
       {:ok, options}
     else
       {_,[],invalid} -> {:error, "Can't recognize following switches: #{inspect(invalid)}\n @see mix fix help"}
@@ -113,7 +120,7 @@ defmodule Mix.Tasks.Fix do
   end
   
   defp expand_glob(glob) do
-    Enum.map(Regex.split(glob, "(?<!\\),"),
+    Enum.map(Regex.split( ~r/(?<!\\),/, glob),
       fn(g) ->
         g |> Path.wildcard() |> Enum.map(fn(f) ->
           f |> Path.expand() |> Path.relative_to_cwd()

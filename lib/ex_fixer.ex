@@ -2,6 +2,7 @@ defmodule ExFixer do
   
   @warning_type_regex %{
     vars: ~r/variable "(?<variable>[^\"]+)" is unused/,
+    attributes: ~r/module attribute @(?<atom>[^\s]+) was set but never used/,
     imports: ~r/unused import (?<atom>.+)/,
     aliases: ~r/unused alias (?<atom>.+)/,
   }
@@ -43,7 +44,7 @@ defmodule ExFixer do
   
   
   def compilation_results(%{passive: true}) do
-    {compile_output, 0} = System.cmd("mix", ["--all-warnings"], stderr_to_stdout: true)
+    {compile_output, 0} = System.cmd("mix", ["compile", "--all-warnings"], stderr_to_stdout: true)
     {:ok, compile_output}
   end
   def compilation_results(_) do
@@ -90,6 +91,7 @@ defmodule ExFixer do
   def warning_type(line) do
     cond do
       Regex.match?(~r/variable "(?<variable>[^\"]+)" is unused/, line.text) -> :vars
+      Regex.match?(~r/module attribute @(?<variable>[^\s]+) was set but never used/, line.text) -> :attributes
       Regex.match?(~r/unused import (?<atom>.+)/, line.text) -> :imports
       Regex.match?(~r/unused alias (?<atom>.+)/, line.text) -> :aliases
       :else -> :other
@@ -166,6 +168,7 @@ defmodule ExFixer do
                                                   :vars -> fix_unused_variable(captures["variable"], replacement, options)
                                                   :imports -> fix_unused_import(captures["atom"], "import", replacement, options)
                                                   :aliases -> fix_unused_alias(captures["atom"], "alias", replacement, options)
+                                                  :attributes -> fix_unused_attribute(captures["atom"], replacement, options)
                                                   _ -> replacement
                                                 end
                                       {Map.put(warning, :alteration, String.myers_difference(replacement, patched)), patched}
@@ -235,6 +238,15 @@ defmodule ExFixer do
   
   def fix_unused_alias(atom, keyword, line, options) do
     fix_unused_atom(atom, keyword, line, options)
+  end
+
+  def fix_unused_attribute(atom, line, _options) do
+    IO.puts "(\s*)\@(#{Regex.escape(atom)})(\s*)"
+    if line != (replacement = Regex.replace(~r/(\s*)\@(#{Regex.escape(atom)})(\s*)/, line, "\\1@_\\2\\3")) do
+      replacement
+    else
+      line
+    end
   end
   
   def fix_unused_atom(atom, keyword, line, options) do
