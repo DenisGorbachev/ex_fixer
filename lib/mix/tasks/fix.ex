@@ -1,71 +1,124 @@
 defmodule Mix.Tasks.Fix do
-  use Mix.Task
-
-  @doc """
+  @moduledoc """
   Fix the warnings, make compiler happy
   
   # Usage
-  mix fix [--force] [--only vars,aliases,...] [--exclude "file*globs*to*exclude"] [--include "file*glob-white-list"] [--run-file command.set] [--to-file command.set.output] [--dry-run]
+  mix fix [--force] [--dry-run] [--only vars,aliases,...] [--exclude "file*globs*to*exclude"] [--include "file*glob-white-list"] [--input-file command.set] [--output-file command.set.output]
+  
+  ## Example
+  
+  
+  1. Everything not in this subfolder will be ignored because out first --(include/exclude) argument was an include.
+  ```
+  mix fix --include "lib/new_framework/**"
+  ```
+  
+  2.
+  The last include/exclude line has the highest precedence. So in this case we will patch lib/new_framework/module/**,
+  while ignoring everything else in lib/new_framework, lib/old_framework, lib_/older_fremework. Because the first command was an exclude
+  something lib lib/other_module would still be patched in this case.
+  
+  ```
+  mix fix --exclude "lib/new_framework/**" --include "lib/new_framework/module/**" --exclude "lib/old_frameework/**,lib/older_framework**"
+  ```
+  
+  3. Do a dry run to see what would get patched and save the list of items to a file so the can be executed if they look good.
+  ```
+  mix fix --dry-run --output-file fix.run
+  mix fix --dry-run --input-file fix.run
+  mix fix --only vars --input-file fix.run
+  ```
   
   # Actions
   * --force - ignore uncommitted changed
-  * --only - specify explicit list of fixes to run
-  * --exclude - ignore files matching any of these comma separated globs.
-  * --include - white list of globs to update | Multiple exclude,includes will control precedence with last entry overriding earlier entries.
-  * --from-file - run list of fixes from file
-  * --output-file - instead of at once, save set of commands to file for review/edit.
   * --dry-run - run by only out putting what would be changed. If set --force is not required if there are active changes.
+  * --passive - differential build. no mix clean, build --force.
+  * --halt-on-error - raise on unexpected exception
+  * --only - specify explicit list of fixes to run (var(s),import(s),alias(ses),function(s)), functions not currently supported
+  * --exclude - ignore files matching any of these comma separated globs.
+  You must wrap this argument in quotes to avoid actually passing in a raw list of args.
+  * --include - white list of globs to update | Multiple exclude,includes will control precedence with last entry overriding earlier entries.
+  * --input-file - run list of fixes from file
+  * --output-file - instead of at once, save set of commands to file for review/edit. Do not actually apply updates.
+  """
+  
+  use Mix.Task
+  
+  
+  @doc """
+  Main Entry Points.
+  usage: mix fix [--force] [--dry-run] [--only vars,aliases,...] [--exclude "file*globs*to*exclude"] [--include "file*glob-white-list"] [--run-file command.set] [--to-file command.set.output]]
   """
   def run(args) do
-    {opts, [], invalid} =
-      OptionParser.parse(
-        args,
-        strict: [
-          force: :boolean,
-          dry_run: :boolean,
-          only: :keep,
-          exclude: :keep,
-          include: :keep,
-          from_file: :string,
-          output_file: :string,
-        ]
-      )
-      
-    if length(invalid) > 0, do: raise("Can't recognize switches: #{inspect(invalid)}")
-
-    request = Enum.join(args, " ")
-    options = Enum.reduce(opts, %{request: request}, fn({arg,value}, acc) ->
-      case arg do
-        :force -> put_in(acc, [:force], value)
-        :dry_run -> put_in(acc, [:dry_run], value)
-        :only -> update_in(acc, [:only], &(MapSet.put(&1 || MapSet.new([]), value)))
-        :exclude -> update_in(acc, [:filters], &( [{:exclude, expand_glob(value)}] ++ (&1 || [])))
-        :include -> update_in(acc, [:filters], &( [{:include, expand_glob(value)}] ++ (&1 || [{:exclude, :all}])))
-        :from_file -> put_in(acc, [:from_file], value)
-        :output_file -> put_in(acc, [:output_file], value)
-      end
-    end)
-    
-    if !options[:force] && !options[:dry_run] && !options[:output_file] do
-      {output, 0} = System.cmd("git", ["status", "--short"], stderr_to_stdout: true)
-
-      if output |> String.trim() |> String.length() > 0,
-        do: raise("Please commit or stash your changes before executing this command")
+    with {:ok, options} <- prepare_options(args),
+         :ok <- local_change_check(options),
+         :ok <- ExFixer.execute(options) do
+      :ok
+    else
+      {:error, v} -> raise v
+      e -> raise {:error, {:unhandle_state, e}}
     end
-
-    ExFixer.execute(options)
+  end
+  
+  
+  @supported_fixes %{
+    "var" => :vars, "vars" => :vars,
+    "import" => :imports, "imports" => :imports,
+    "alias" => :aliases, "aliases" => :aliases,
+    "function" => :functions, "functions" => :functions,
+    "other" => :other
+  }
+  
+  @allowed_switched  [
+    force: :boolean, dry_run: :boolean,
+    passive: :boolean, halt_on_error: :boolean,
+    only: :keep, exclude: :keep, include: :keep,
+    input_file: :string, output_file: :string,
+  ]
+  
+  
+  defp local_change_check(options) do
+    with false <- (options[:force] || options[:dry_run] || options[:output_file] || false) && :ok,
+         {output, 0} <- System.cmd("git", ["status", "--short"], stderr_to_stdout: true),
+         true <- (String.trim(output)  == "") || {:error, {:output, output}} do
+      :ok
+    else
+      {:error, e} -> {:error, e}
+      {:error, {:output,_}} -> {:error, "Please commit or stash your changes before executing this command"}
+      _ -> {:error, "Unexpected failure Checking for Local Changes"}
+    end
+  end
+  
+  defp prepare_options(args) do
+    with {opts, [], []} <- OptionParser.parse(args, strict: @allowed_switched) do
+      initial = Enum.map(@allowed_switched, &({elem(&1,0), nil}))
+                |> Map.new()
+                |> put_in(:filters, nil)
+                |> put_in([:request], Enum.join(args, " "))
+                |> put_in([:request_time], DateTime.utc_now())
+      options = Enum.reduce(opts, initial,
+        fn({arg,value}, acc) ->
+          case arg do
+            key when key in[:force, :dry_run, :passive, :in_file, :out_file] -> put_in(acc, [key], value)
+            :only -> update_in(acc, [:only], &(MapSet.put(&1 || MapSet.new([]), @supported_fixes[String.downcase(value)] || {:unsupported, value})))
+            :exclude -> update_in(acc, [:filters], &( [{:exclude, expand_glob(value)}] ++ (&1 || [])))
+            :include -> update_in(acc, [:filters], &( [{:include, expand_glob(value)}] ++ (&1 || [{:exclude, :all}])))
+          end
+        end)
+      {:ok, options}
+    else
+      {_,[],invalid} -> {:error, "Can't recognize following switches: #{inspect(invalid)}\n @see mix fix help"}
+      _ -> {:error, "unknown error encountered"}
+    end
   end
   
   defp expand_glob(glob) do
-    Enum.map(String.split(glob, ","), fn(g) ->
-      g
-      |> Path.wildcard()
-      |> Enum.map(fn(f) ->
-        f
-        |> Path.expand()
-        |> Path.relative_to_cwd()
-      end)
-    end)|> List.flatten() |> MapSet.new()
+    Enum.map(Regex.split(glob, "(?<!\\),"),
+      fn(g) ->
+        g |> Path.wildcard() |> Enum.map(fn(f) ->
+          f |> Path.expand() |> Path.relative_to_cwd()
+        end)
+      end) |> List.flatten() |> MapSet.new()
   end
 
 end
